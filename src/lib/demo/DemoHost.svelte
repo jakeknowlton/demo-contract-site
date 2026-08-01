@@ -2,19 +2,21 @@
   DemoHost -- the only place the site touches a demo artifact.
 
   Responsibilities, in order:
-    1. read meta.json
-    2. refuse politely if the contract version is too new
-    3. refuse politely if the browser lacks a required feature
-    4. import demo.js and call mount()
-    5. call destroy() on unmount, exactly once, without throwing
+    1. look up build-time metadata (no network)
+    2. emit preload hints into the prerendered HTML
+    3. refuse politely if the contract version is too new
+    4. refuse politely if the browser lacks a required feature
+    5. import demo.js and call mount()
+    6. call destroy() on unmount, exactly once, without throwing
 
-  Steps 2 and 3 are why meta.json is read *before* demo.js is imported. Once
-  you've imported and mounted, it's too late to decline gracefully.
+  Steps 3 and 4 happen before the import, because once you have imported and
+  mounted, it is too late to decline gracefully.
 -->
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { CONTRACT_VERSION, detectMissingFeatures, type DemoHandle } from './contract';
-	import { fetchMeta, loadDemo } from './loader';
+	import { DEMO_META } from './generated-manifest';
+	import { artifactUrl, loadDemo } from './loader';
 
 	let {
 		slug,
@@ -29,6 +31,36 @@
 
 	type Phase = 'loading' | 'ready' | 'missing' | 'unsupported' | 'error';
 
+	// Metadata is known at BUILD time, so this is a synchronous lookup rather
+	// than a fetch. Two things fall out of that:
+	//   - one fewer network round trip before the demo can start loading
+	//   - the entry/preload filenames are known during prerender, so the hints
+	//     below can be baked into the static HTML
+	const meta = $derived(DEMO_META[`${slug}@${version}`]);
+
+	// Preload hints, computed during prerender. `demo.js` gets modulepreload;
+	// whatever the artifact declared in `preload` gets the appropriate hint.
+	//
+	// Without these, the browser can only discover each file after the previous
+	// one has downloaded:  demo.js -> expr.js -> expr_bg.wasm. With them, all
+	// three start during initial HTML parse, in parallel with the site's own JS.
+	const hints = $derived.by(() => {
+		if (!meta) return { modules: [] as string[], buffers: [] as string[] };
+
+		const modules = [artifactUrl(slug, version, meta.entry)];
+		const buffers: string[] = [];
+
+		for (const file of meta.preload ?? []) {
+			const url = artifactUrl(slug, version, file);
+			// .js is an ES module the browser will import; anything else (.wasm,
+			// data files) is fetched, so it needs `as="fetch"` instead.
+			if (file.endsWith('.js')) modules.push(url);
+			else buffers.push(url);
+		}
+
+		return { modules, buffers };
+	});
+
 	let container: HTMLDivElement;
 	let phase = $state<Phase>('loading');
 	let detail = $state('');
@@ -42,25 +74,28 @@
 
 	onMount(async () => {
 		try {
-			// --- meta.json -----------------------------------------------------
-			const meta = await fetchMeta(slug, version);
-
-			// null means 404, which is the ordinary "nobody ran the fetch script"
-			// case -- someone cloned the repo and ran `npm run dev` offline. It is
-			// not an error and must not look like one.
+			// --- build-time metadata ---------------------------------------------
+			// No entry means the artifact was not fetched -- the ordinary "cloned
+			// the repo and ran npm run dev offline" case. Not an error, and it must
+			// not look like one.
 			if (!meta) {
 				phase = 'missing';
 				return;
 			}
 
-			// --- contract version ----------------------------------------------
+			// --- contract version -------------------------------------------------
+			// fetch-demos.ts already rejects artifacts that are too new, so this is
+			// a second line of defence. Cheap, and it keeps DemoHost correct even if
+			// someone hand-drops files into static/demos/.
 			if (meta.contractVersion > CONTRACT_VERSION) {
 				phase = 'error';
 				detail = `artifact requires contract v${meta.contractVersion}, this site speaks v${CONTRACT_VERSION}`;
 				return;
 			}
 
-			// --- browser capabilities ------------------------------------------
+			// --- browser capabilities ---------------------------------------------
+			// Must stay in onMount: it touches navigator/document, which do not
+			// exist during prerendering.
 			const missing = detectMissingFeatures(meta.features);
 			if (missing.length > 0) {
 				phase = 'unsupported';
@@ -68,7 +103,7 @@
 				return;
 			}
 
-			// --- mount ----------------------------------------------------------
+			// --- mount --------------------------------------------------------------
 			const mod = await loadDemo(slug, version, meta.entry);
 			const mounted = await mod.mount(container, options);
 
@@ -107,6 +142,21 @@
 		handle = null;
 	});
 </script>
+
+<svelte:head>
+	{#each hints.modules as href (href)}
+		<link rel="modulepreload" {href} />
+	{/each}
+	{#each hints.buffers as href (href)}
+		<!--
+			`as="fetch"` because wasm-bindgen retrieves the binary with fetch(),
+			not via <script>. `crossorigin` is required even same-origin: fetch()
+			uses cors mode by default, and a preload whose credentials mode does
+			not match the eventual request is ignored and downloaded twice.
+		-->
+		<link rel="preload" {href} as="fetch" type="application/wasm" crossorigin="anonymous" />
+	{/each}
+</svelte:head>
 
 <div class="host">
 	{#if phase !== 'ready'}

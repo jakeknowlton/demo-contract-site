@@ -40,6 +40,20 @@ export interface DemoMeta {
 	sourceCommit: string;
 	/** Browser capabilities the demo requires, e.g. ["webgl2"], ["webgpu"]. */
 	features?: string[];
+	/**
+	 * Extra files the site should start fetching early, relative to the
+	 * artifact directory -- typically the wasm-bindgen glue and the .wasm.
+	 *
+	 * The site cannot guess these: they are an implementation detail of whatever
+	 * toolchain built the artifact. Without them you get a four-deep request
+	 * waterfall, because each file is only discovered once the previous one has
+	 * downloaded.
+	 *
+	 * Added AFTER contractVersion 1 shipped, without a version bump, because it
+	 * is optional in both directions: a site that ignores it still works, and an
+	 * artifact that omits it still works. Only incompatible changes need a bump.
+	 */
+	preload?: string[];
 }
 
 /**

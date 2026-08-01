@@ -1,4 +1,5 @@
-// Download pinned demo artifacts into static/demos/<slug>/<tag>/
+// Download pinned demo artifacts into static/demos/<slug>/<tag>/ and generate
+// src/lib/demo/generated-manifest.ts from their meta.json files.
 //
 // Run:  node --experimental-strip-types scripts/fetch-demos.ts
 //
@@ -6,8 +7,9 @@
 // and no dependencies -- everything used here is either a Node builtin or the
 // `tar` binary that ships with macOS and Linux.
 //
-// Wired into `predev` and `prebuild` in package.json, so it runs automatically
-// and is safe to run repeatedly: already-present artifacts are skipped.
+// Wired into `predev`, `prebuild` and `precheck` in package.json, so it runs
+// automatically and is safe to run repeatedly: artifacts already on disk are
+// skipped, and only the generated file is rewritten.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,11 +23,22 @@ interface DemoEntry {
 	asset: string;
 }
 
+interface DemoMeta {
+	contractVersion: number;
+	name: string;
+	entry: string;
+	buildTag: string;
+	sourceCommit: string;
+	features?: string[];
+	preload?: string[];
+}
+
 /** Must match CONTRACT_VERSION in src/lib/demo/contract.ts. */
 const CONTRACT_VERSION = 1;
 
 const MANIFEST = 'demos.manifest.json';
 const OUT_ROOT = join('static', 'demos');
+const GENERATED = join('src', 'lib', 'demo', 'generated-manifest.ts');
 
 // A token is OPTIONAL for public repos. It is required only for private ones
 // (your `compilers` repo), where it must be a fine-grained PAT with
@@ -102,14 +115,15 @@ async function downloadAsset(repo: string, tag: string, assetName: string): Prom
 	return Buffer.from(await res.arrayBuffer());
 }
 
-async function fetchOne(entry: DemoEntry): Promise<void> {
+/** Download and unpack one artifact, unless it is already on disk. */
+async function ensurePresent(entry: DemoEntry): Promise<void> {
 	const dest = join(OUT_ROOT, entry.slug, entry.tag);
 
 	// Idempotence: this is what makes the script safe to run on every `npm run
 	// dev`. Because the tag is in the path, a bumped version is simply a
 	// different directory -- there is no cache to invalidate.
 	if (existsSync(join(dest, 'meta.json'))) {
-		console.log(`  ${entry.slug}@${entry.tag}  already present, skipping`);
+		console.log(`  ${entry.slug}@${entry.tag}  already present`);
 		return;
 	}
 
@@ -127,22 +141,77 @@ async function fetchOne(entry: DemoEntry): Promise<void> {
 		rmSync(tmpFile, { force: true });
 	}
 
-	// Validate the contract version now, at build time, rather than letting a
-	// mismatch surface at runtime as a demo that mounts and then misbehaves in
-	// ways that look like a bug in the site.
-	const metaPath = join(dest, 'meta.json');
-	if (!existsSync(metaPath)) {
-		throw new Error(`${entry.slug}@${entry.tag}: artifact contains no meta.json`);
-	}
-	const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { contractVersion: number };
-	if (meta.contractVersion > CONTRACT_VERSION) {
-		throw new Error(
-			`${entry.slug}@${entry.tag} requires contract v${meta.contractVersion}, ` +
-				`this site speaks v${CONTRACT_VERSION}`
-		);
+	console.log(`  ${entry.slug}@${entry.tag}  ok (${(bytes.length / 1024).toFixed(0)} KB)`);
+}
+
+/**
+ * Read every artifact's meta.json off disk and validate it.
+ *
+ * Deliberately reads from DISK rather than from whatever was just downloaded,
+ * so the generated file is correct whether or not anything was fetched this
+ * run. An artifact that failed to download simply has no entry, which is what
+ * DemoHost renders as the "missing" state.
+ */
+function collectMeta(entries: DemoEntry[]): Record<string, DemoMeta> {
+	const out: Record<string, DemoMeta> = {};
+
+	for (const entry of entries) {
+		const metaPath = join(OUT_ROOT, entry.slug, entry.tag, 'meta.json');
+		if (!existsSync(metaPath)) continue;
+
+		const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as DemoMeta;
+
+		// Validate at build time rather than letting a mismatch surface at runtime
+		// as a demo that mounts and then misbehaves in ways that look like a bug
+		// in the site.
+		if (meta.contractVersion > CONTRACT_VERSION) {
+			console.warn(
+				`  WARN ${entry.slug}@${entry.tag} requires contract v${meta.contractVersion}, ` +
+					`this site speaks v${CONTRACT_VERSION} -- skipping`
+			);
+			continue;
+		}
+
+		out[`${entry.slug}@${entry.tag}`] = meta;
 	}
 
-	console.log(`  ${entry.slug}@${entry.tag}  ok (${(bytes.length / 1024).toFixed(0)} KB)`);
+	return out;
+}
+
+/**
+ * Write src/lib/demo/generated-manifest.ts.
+ *
+ * Why generate a module instead of letting the browser fetch meta.json at
+ * runtime: meta.json is known at build time, so fetching it costs a network
+ * round trip that buys nothing, AND it delays the demo import until after that
+ * round trip completes. Baking it in lets DemoHost decide everything
+ * synchronously and start the import immediately -- and lets it emit preload
+ * hints into the prerendered HTML, which it could not do if the filenames were
+ * only discoverable at runtime.
+ *
+ * ALWAYS writes, even when empty. If this file were sometimes absent, an import
+ * of it would fail and break the build on a fresh clone.
+ */
+function writeGenerated(meta: Record<string, DemoMeta>): void {
+	const body = `// GENERATED FILE -- do not edit.
+// Written by scripts/fetch-demos.ts from each artifact's meta.json.
+// Gitignored: regenerated by predev / prebuild / precheck.
+
+import type { DemoMeta } from './contract';
+
+/**
+ * Metadata for every demo artifact present in this build, keyed by
+ * \`\${slug}@\${version}\`.
+ *
+ * A missing key means the artifact was not fetched -- normal when working
+ * offline -- and DemoHost renders its "missing" state for it.
+ */
+export const DEMO_META: Record<string, DemoMeta> = ${JSON.stringify(meta, null, 2)};
+`;
+
+	writeFileSync(GENERATED, body);
+	const count = Object.keys(meta).length;
+	console.log(`  wrote ${GENERATED} (${count} demo${count === 1 ? '' : 's'})`);
 }
 
 async function main(): Promise<void> {
@@ -153,7 +222,7 @@ async function main(): Promise<void> {
 
 	for (const entry of manifest.demos) {
 		try {
-			await fetchOne(entry);
+			await ensurePresent(entry);
 		} catch (err) {
 			// WARN AND CONTINUE -- deliberately not a hard failure.
 			//
@@ -167,6 +236,8 @@ async function main(): Promise<void> {
 			console.warn(`  WARN ${entry.slug}@${entry.tag}: ${(err as Error).message}`);
 		}
 	}
+
+	writeGenerated(collectMeta(manifest.demos));
 }
 
 await main();

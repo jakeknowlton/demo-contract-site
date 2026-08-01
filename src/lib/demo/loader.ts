@@ -3,9 +3,17 @@
 // Demo artifacts live in static/, which Vite copies verbatim and never
 // processes. They are therefore NOT part of the site's bundle -- they are files
 // fetched over the network at runtime, exactly like an image.
+//
+// That laziness is deliberate: someone reading the landing page should not
+// download a 67 KB emulator. Keeping demos out of the bundle means the site's
+// initial payload does not grow as projects are added.
+//
+// Note there is no meta.json fetch here. Metadata is baked into
+// generated-manifest.ts at build time, which removes a round trip and lets
+// DemoHost decide everything synchronously.
 
 import { base } from '$app/paths';
-import type { DemoMeta, DemoModule } from './contract';
+import type { DemoModule } from './contract';
 
 /**
  * Where a demo's files live.
@@ -22,17 +30,9 @@ export function demoBaseUrl(slug: string, version: string): string {
 	return `${base}/demos/${slug}/${version}`;
 }
 
-/**
- * Read meta.json.
- *
- * Returns null on 404, which is the normal "artifact not fetched" case -- it
- * happens whenever someone clones the repo and runs `npm run dev` without a
- * network, and it must not be treated as an error.
- */
-export async function fetchMeta(slug: string, version: string): Promise<DemoMeta | null> {
-	const res = await fetch(`${demoBaseUrl(slug, version)}/meta.json`);
-	if (!res.ok) return null;
-	return (await res.json()) as DemoMeta;
+/** URL of one file inside an artifact. */
+export function artifactUrl(slug: string, version: string, file: string): string {
+	return `${demoBaseUrl(slug, version)}/${file}`;
 }
 
 /**
@@ -49,6 +49,6 @@ export async function loadDemo(
 	version: string,
 	entry: string
 ): Promise<DemoModule> {
-	const url = `${demoBaseUrl(slug, version)}/${entry}`;
+	const url = artifactUrl(slug, version, entry);
 	return (await import(/* @vite-ignore */ url)) as DemoModule;
 }

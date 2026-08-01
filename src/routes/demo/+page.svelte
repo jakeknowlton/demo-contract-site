@@ -24,7 +24,7 @@
 	per-page configuration reaches a demo without the demo knowing anything
 	about this site.
 -->
-<DemoHost slug="expr" version="v0.1.0" options={{ initial: '1 + 2 * (3 - 1)' }} />
+<DemoHost slug="expr" version="v0.2.0" options={{ initial: '1 + 2 * (3 - 1)' }} />
 
 <p class="note">
 	Try <code>2 * (1 +</code> or <code>1 / 0</code> to see an error path, then run a valid
