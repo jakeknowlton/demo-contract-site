@@ -2,28 +2,28 @@
   The `expr` demo UI. Owned entirely by the site.
   Lives next to the project's other content, so [slug] can render it generically.
 
-  Compare this with what the artifact used to ship in contractVersion 1: the
-  same interface, but built by hand out of document.createElement, wired with
-  addEventListener, torn down by hand, and styled by an injected <style> block
-  that knew nothing about this site's theme.
+  The package it consumes is an ordinary npm dependency, used the ordinary way:
+  `import('@jakeknowlton/expr')` gives a module with a typed `compile` function.
+  Nothing about it knows this site exists, and nothing here is bespoke.
 
-  Everything below inherits the site's custom properties, so dark mode works for
-  free and restyling every demo is one place. And there is no teardown code at
-  all -- Svelte owns this DOM, which removes the whole leaked-listener /
-  stray-timer bug class from every demo I will ever write.
+  Note what is NOT in this repo any more: a hand-written interface declaration.
+  The package ships its own `.d.ts` -- generated from the Rust doc comments --
+  so `expr.compile` is typed, autocompleted, and documented on hover, and a
+  signature change becomes a type error here at build time.
 -->
 <script lang="ts">
-	import type { ExprApi } from './api';
+	// The type of the module namespace. TypeScript resolves this from the
+	// package's own expr.d.ts, so it stays correct automatically.
+	type ExprModule = typeof import('@jakeknowlton/expr');
 
-	let { api }: { api: ExprApi } = $props();
+	let { expr }: { expr: ExprModule } = $props();
 
 	let source = $state('1 + 2 * (3 - 1)');
 
 	// Straight into WASM on every keystroke. This compiler takes microseconds,
-	// so there is no debounce -- and note that the v1 UI needed a hand-rolled
-	// setTimeout debounce plus matching clearTimeout in its teardown. If a demo
-	// ever were expensive, this is where a debounced $derived would go.
-	const report = $derived(api.compile(source));
+	// so there is no debounce. If a demo ever were expensive, a debounced
+	// $derived would go here.
+	const report = $derived(expr.compile(source));
 
 	// Two valid, two that exercise error paths. Worth showing that a bad input
 	// produces a message and the instance keeps working afterwards.

@@ -1,12 +1,26 @@
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import wasm from 'vite-plugin-wasm';
 
 // NOTE: in this version of SvelteKit there is no svelte.config.js -- the kit
 // configuration lives here, passed straight to the sveltekit() plugin.
 
 export default defineConfig({
 	plugins: [
+		// Required to consume a wasm-pack `--target bundler` package: its entry
+		// does `import * as wasm from "./expr_bg.wasm"`, and Vite cannot import a
+		// .wasm as a module on its own.
+		//
+		// Most guides pair this with vite-plugin-top-level-await, because
+		// instantiating WASM is async and the package calls __wbindgen_start() at
+		// module top level. That is NOT needed here, for two reasons: top-level
+		// await is natively supported in every browser Vite's default target
+		// covers, and vite-plugin-top-level-await depends on rollup, which Vite 8
+		// no longer ships (it uses rolldown) -- so installing it actually breaks
+		// the build with "Cannot find module 'rollup'".
+		wasm(),
+
 		sveltekit({
 			compilerOptions: {
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.

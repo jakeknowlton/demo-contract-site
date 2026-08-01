@@ -1,7 +1,6 @@
 <script lang="ts">
 	import DemoHost from '$lib/demo/DemoHost.svelte';
 	import ExprDemo from '$lib/content/projects/expr/Demo.svelte';
-	import type { ExprApi } from '$lib/content/projects/expr/api';
 </script>
 
 <svelte:head>
@@ -11,32 +10,33 @@
 <h1>expr</h1>
 
 <p>
-	An arithmetic expression compiler written in Rust and compiled to WebAssembly. Lexer →
-	parser → evaluator. Built and released by
-	<a href="https://github.com/jakeknowlton/demo-contract-wasm">demo-contract-wasm</a>, which
-	ships <em>only</em> a <code>create()</code> function — no markup, no styling. Everything
-	you can see below is this site's.
+	An arithmetic expression compiler written in Rust and compiled to WebAssembly, published
+	to npm as
+	<code>@jakeknowlton/expr</code> by
+	<a href="https://github.com/jakeknowlton/demo-contract-wasm">demo-contract-wasm</a>. This
+	site consumes it as an ordinary dependency; every pixel below is the site's.
 </p>
 
 <!--
-	The whole integration. DemoHost does the identical-for-every-demo work
-	(preload hints, version check, feature detection, create/destroy) and hands
-	the API to the UI component, which lives with the project's other content.
+	The whole integration, and it is deliberately unremarkable: a dynamic import
+	of an npm package, and a component that uses it.
 
-	`slug` and `version` must match an entry in demos.manifest.json -- the
-	version appears in both places, which is a real drift risk worth a
-	build-time assertion on the production site.
+	The thunk matters. `import('@jakeknowlton/expr')` evaluated eagerly at module
+	scope would run during prerendering, where there is no browser. Passing it as
+	a function defers it to onMount, and also lets Vite code-split the package
+	into its own chunk so the 67 KB WASM stays out of the initial bundle.
+
+	Measured cost of doing it this way: the WASM request starts at ~52ms instead
+	of the ~30ms the old hand-built preload hints achieved, because a lazy chunk
+	cannot begin until the route's JS has booted, whereas a <link rel=preload> in
+	the prerendered HTML starts during parse. Hoisting the import to module scope
+	behind a `browser` guard recovers only ~5ms, which isn't worth the awkwardness.
+	SvelteKit doesn't expose Vite's hashed chunk URLs to components, so there is no
+	clean way to preload a lazy dependency from the HTML.
 -->
-<DemoHost slug="expr" version="v0.3.0">
-	{#snippet children(api)}
-		<!--
-			The one place the site asserts an artifact's shape. The module is
-			imported from a runtime URL, so there is nothing for TypeScript to
-			resolve; ExprApi in ./api.ts is the hand-written declaration, and this
-			cast is where it gets applied. Exactly the assertion a frontend makes
-			about a backend's response type.
-		-->
-		<ExprDemo api={api as ExprApi} />
+<DemoHost load={() => import('@jakeknowlton/expr')}>
+	{#snippet children(expr)}
+		<ExprDemo {expr} />
 	{/snippet}
 </DemoHost>
 
