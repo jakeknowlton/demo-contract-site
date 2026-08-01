@@ -1,0 +1,81 @@
+# Build the site and deploy it to GitHub Pages.
+#
+# Note what this workflow does NOT do: install Rust, or build any demo. It
+# downloads prebuilt artifacts. That is the whole point of the release-artifact
+# approach -- the site's build time stays constant no matter how many projects,
+# or how many different languages, you add.
+#
+# Before this works, set Settings -> Pages -> Source to "GitHub Actions".
+# That is a manual step; nothing deploys until you do it.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  # Lets you redeploy from the Actions tab without pushing a commit -- useful
+  # after bumping a demo version, or to re-run a failed cert/Pages setup.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write # create a Pages deployment
+  id-token: write # OIDC token that deploy-pages uses to authenticate
+
+# Serialise deployments. cancel-in-progress is false because cancelling a
+# half-finished Pages deployment can leave the site in an odd state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch demo artifacts
+        # Run explicitly rather than relying on the `prebuild` hook, so the
+        # download shows up as its own step in the logs -- when a demo fails to
+        # fetch you want to see that immediately, not buried in build output.
+        # (The prebuild hook still fires on the next step and no-ops, because
+        # the fetch script skips artifacts that are already present.)
+        run: npm run fetch-demos
+        env:
+          # DEMO_FETCH_TOKEN is a fine-grained PAT with Contents: Read-only on
+          # the private repos that publish demos. It is NOT needed here, because
+          # demo-contract-wasm is public -- but it's wired up so that adding a
+          # private demo later needs no workflow change.
+          #
+          # The fallback github.token can read public repos but CANNOT read
+          # another private repo's releases: it is scoped to this repository
+          # only. That scoping is the entire reason a separate PAT exists.
+          GITHUB_TOKEN: ${{ secrets.DEMO_FETCH_TOKEN || github.token }}
+
+      - name: Build
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          # adapter-static writes here. Must match the adapter's output dir.
+          path: build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # This environment is what GitHub uses to record the deployment and surface
+    # the live URL in the repo sidebar.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

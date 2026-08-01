@@ -1,0 +1,13 @@
+# Tells GitHub Pages not to run Jekyll on this site.
+#
+# Jekyll ignores every directory whose name starts with an underscore, which
+# would silently drop SvelteKit's _app/ directory -- so every stylesheet and
+# script would 404 in production while working perfectly in local dev.
+#
+# The Actions-based deploy path (upload-pages-artifact + deploy-pages) does not
+# run Jekyll, so this is belt-and-braces. It becomes load-bearing the moment
+# anyone switches to deploying from a branch. It costs nothing, so keep it.
+#
+# Note: adapter-static does NOT create this file, despite what a lot of guides
+# claim. Verified empirically -- it was absent from build/ until this file was
+# added to static/.

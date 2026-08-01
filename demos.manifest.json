@@ -1,0 +1,12 @@
+{
+  "$comment": "Which demo artifacts this site uses, and exactly which version of each. Pinning by tag makes the site's build reproducible: rebuilding an old commit fetches the same bytes. Bumping a demo is a one-line change in a reviewable diff. Lives at the repo root because it is build input, not application source.",
+  "contractVersion": 1,
+  "demos": [
+    {
+      "slug": "expr",
+      "repo": "jakeknowlton/demo-contract-wasm",
+      "tag": "v0.1.0",
+      "asset": "demo.tar.gz"
+    }
+  ]
+}

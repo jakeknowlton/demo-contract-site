@@ -1,0 +1,54 @@
+// Loading a demo artifact at runtime.
+//
+// Demo artifacts live in static/, which Vite copies verbatim and never
+// processes. They are therefore NOT part of the site's bundle -- they are files
+// fetched over the network at runtime, exactly like an image.
+
+import { base } from '$app/paths';
+import type { DemoMeta, DemoModule } from './contract';
+
+/**
+ * Where a demo's files live.
+ *
+ * The version is part of the path, which gives two things for free:
+ *   - two versions can coexist, so a page can pin an older build
+ *   - the URL is immutable, so it can be cached forever
+ *
+ * `base` must be included: on this test site it is '/demo-contract-site'.
+ * Hardcoding '/demos/...' works locally and 404s in production -- one of the
+ * most common GitHub Pages project-site mistakes.
+ */
+export function demoBaseUrl(slug: string, version: string): string {
+	return `${base}/demos/${slug}/${version}`;
+}
+
+/**
+ * Read meta.json.
+ *
+ * Returns null on 404, which is the normal "artifact not fetched" case -- it
+ * happens whenever someone clones the repo and runs `npm run dev` without a
+ * network, and it must not be treated as an error.
+ */
+export async function fetchMeta(slug: string, version: string): Promise<DemoMeta | null> {
+	const res = await fetch(`${demoBaseUrl(slug, version)}/meta.json`);
+	if (!res.ok) return null;
+	return (await res.json()) as DemoMeta;
+}
+
+/**
+ * Dynamically import a demo's entry module.
+ *
+ * The `@vite-ignore` annotation on the import below is REQUIRED and easy to
+ * overlook. Vite statically analyses dynamic imports so it can pre-bundle them;
+ * when the specifier is a variable it cannot, and the build fails. The
+ * annotation tells Vite to leave this import alone and emit it as a genuine
+ * runtime import.
+ */
+export async function loadDemo(
+	slug: string,
+	version: string,
+	entry: string
+): Promise<DemoModule> {
+	const url = `${demoBaseUrl(slug, version)}/${entry}`;
+	return (await import(/* @vite-ignore */ url)) as DemoModule;
+}
