@@ -6,70 +6,69 @@
 	<title>demo contract test</title>
 	<meta
 		name="description"
-		content="Two-repo reference implementation of a WASM demo contract, deployed to GitHub Pages."
+		content="A SvelteKit site on GitHub Pages running a Rust/WASM demo consumed as an ordinary npm package."
 	/>
 </svelte:head>
 
-<h1>Demo contract test</h1>
+<h1>Packaging a WASM project conventionally</h1>
 
 <p>
-	A two-repo reference implementation. This site is built with SvelteKit, prerendered to
-	static files, and served from GitHub Pages. It loads a WebAssembly demo that is built,
-	versioned, and released by an entirely separate repository.
+	Two repos. One publishes a Rust compiler to npm and GitHub Releases the way any library is
+	published. This site — SvelteKit, prerendered to static files, served from GitHub Pages —
+	is just a downstream consumer.
 </p>
 
 <h2>The data flow</h2>
 
-<pre class="flow">demo-contract-wasm            demo-contract-site
-──────────────────            ──────────────────
-Rust source
-    │ cargo + wasm-bindgen
-    ▼
-expr_bg.wasm + expr.js
-    │ + hand-written api.js
-    ▼
-demo.tar.gz  ──────────────▶  scripts/fetch-demos.ts
-  (GitHub Release, tag        reads demos.manifest.json,
-   v0.3.0, asset name         downloads the pinned tag into
-   is always demo.tar.gz)     static/demos/expr/v0.3.0/
-                                          │
-                                          ▼
-                              DemoHost.svelte
-                              checks the build-time metadata,
-                              contract version, and browser
-                              features, then imports api.js
-                              and calls create() — then hands
-                              the API to the site's own UI
-                              component, which owns all markup
-                              and styling</pre>
+<pre class="flow">demo-contract-wasm                    demo-contract-site
+──────────────────                    ──────────────────
+git tag v0.4.0
+   │
+   ├─ wasm-pack --target bundler
+   │     expr.js + expr_bg.wasm + expr.d.ts
+   │     package.json generated from Cargo.toml
+   │
+   ├─ npm publish --provenance ─────▶ npm install @jakeknowlton/expr
+   │                                        │
+   ├─ cargo build (3 targets)               ▼
+   │     └─▶ GitHub Release           import('@jakeknowlton/expr')
+   │         + SHA256SUMS                   │
+   │                                        ▼
+   └─ (crates.io: same crate)         Demo.svelte
+                                      all markup + styling,
+                                      typed from the package's .d.ts</pre>
 
 <h2>What it demonstrates</h2>
 
 <ul>
 	<li>
-		<strong>The site never compiles the demo.</strong> No Rust toolchain in the site's CI.
-		It downloads a pinned release artifact, so build times don't grow as projects are added.
+		<strong>No bespoke contract.</strong> An earlier version invented one — a manifest
+		pinning git tags, a fetch script, a <code>contractVersion</code>, a hand-written
+		interface declaration. All of it reimplemented things npm already does. Deleting it
+		removed 439 lines here.
 	</li>
 	<li>
-		<strong>The contract is language-agnostic.</strong> It mentions only
-		<code>create()</code> and <code>destroy()</code> — not Rust, not wasm-bindgen, not even
-		WebAssembly. Zig or C would satisfy it with hand-written glue; a TypeScript project
-		would satisfy it with no WASM at all.
+		<strong>Integrity comes free, and matters.</strong> Git tags are <em>mutable</em>, so
+		pinning by tag was never as reproducible as it looked. A lockfile records an integrity
+		hash per dependency.
 	</li>
 	<li>
-		<strong>The artifact is a library, not a page.</strong> It exports
-		<code>create()</code> and builds no DOM. The site owns all markup and styling, so
-		demos inherit the theme, dark mode works, and restyling every demo is one place.
-		Frontend/backend: the site knows the interface and owns every pixel.
+		<strong>Types come free.</strong> wasm-bindgen generates a <code>.d.ts</code> from the
+		Rust doc comments, so <code>compile</code> is typed and documented on hover — and a
+		signature change becomes a build error here.
 	</li>
 	<li>
-		<strong>Versions are pinned.</strong> The tag is part of the URL path, so builds are
-		reproducible and demo assets are immutable and cacheable forever.
+		<strong>The library is the product.</strong> <code>wasm-bindgen</code> is target-gated
+		in the crate, so a Rust consumer pulls in no JS glue, and the CLI, the tests, and the
+		browser build all share one implementation.
 	</li>
 	<li>
-		<strong>Failure is graceful.</strong> If the artifact hasn't been fetched, the demo page
-		says so instead of breaking. Try it: delete <code>static/demos/</code> and run
-		<code>npm run dev</code>.
+		<strong>The site owns every pixel.</strong> The package exports a function and builds
+		no DOM, so demos inherit the theme, dark mode works, and restyling is one place.
+	</li>
+	<li>
+		<strong>It costs about 20 ms.</strong> A lazily-imported chunk starts later than a
+		preload hint in prerendered HTML. Measured, documented in the README, and worth it.
 	</li>
 </ul>
 
@@ -78,7 +77,7 @@ demo.tar.gz  ──────────────▶  scripts/fetch-demos.
 <style>
 	.flow {
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.78rem;
+		font-size: 0.75rem;
 		line-height: 1.5;
 		overflow-x: auto;
 		padding: 1rem;
