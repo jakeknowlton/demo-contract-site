@@ -13,7 +13,7 @@
 // DemoHost decide everything synchronously.
 
 import { base } from '$app/paths';
-import type { DemoModule } from './contract';
+import type { DemoApi, DemoModule } from './contract';
 
 /**
  * Where a demo's files live.
@@ -44,11 +44,11 @@ export function artifactUrl(slug: string, version: string, file: string): string
  * annotation tells Vite to leave this import alone and emit it as a genuine
  * runtime import.
  */
-export async function loadDemo(
+export async function loadDemo<TApi extends DemoApi>(
 	slug: string,
 	version: string,
 	entry: string
-): Promise<DemoModule> {
+): Promise<DemoModule<TApi>> {
 	const url = artifactUrl(slug, version, entry);
-	return (await import(/* @vite-ignore */ url)) as DemoModule;
+	return (await import(/* @vite-ignore */ url)) as DemoModule<TApi>;
 }

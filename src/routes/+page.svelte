@@ -26,19 +26,22 @@ Rust source
     │ cargo + wasm-bindgen
     ▼
 expr_bg.wasm + expr.js
-    │ + hand-written demo.js
+    │ + hand-written api.js
     ▼
 demo.tar.gz  ──────────────▶  scripts/fetch-demos.ts
   (GitHub Release, tag        reads demos.manifest.json,
-   v0.1.0, asset name         downloads the pinned tag into
-   is always demo.tar.gz)     static/demos/expr/v0.1.0/
+   v0.3.0, asset name         downloads the pinned tag into
+   is always demo.tar.gz)     static/demos/expr/v0.3.0/
                                           │
                                           ▼
                               DemoHost.svelte
-                              reads meta.json, checks the
-                              contract version and browser
-                              features, then imports demo.js
-                              and calls mount(el, options)</pre>
+                              checks the build-time metadata,
+                              contract version, and browser
+                              features, then imports api.js
+                              and calls create() — then hands
+                              the API to the site's own UI
+                              component, which owns all markup
+                              and styling</pre>
 
 <h2>What it demonstrates</h2>
 
@@ -49,9 +52,15 @@ demo.tar.gz  ──────────────▶  scripts/fetch-demos.
 	</li>
 	<li>
 		<strong>The contract is language-agnostic.</strong> It mentions only
-		<code>mount(el, opts)</code> and <code>destroy()</code> — not Rust, not wasm-bindgen,
-		not even WebAssembly. Zig or C would satisfy it with hand-written glue; a TypeScript
-		project would satisfy it with no WASM at all.
+		<code>create()</code> and <code>destroy()</code> — not Rust, not wasm-bindgen, not even
+		WebAssembly. Zig or C would satisfy it with hand-written glue; a TypeScript project
+		would satisfy it with no WASM at all.
+	</li>
+	<li>
+		<strong>The artifact is a library, not a page.</strong> It exports
+		<code>create()</code> and builds no DOM. The site owns all markup and styling, so
+		demos inherit the theme, dark mode works, and restyling every demo is one place.
+		Frontend/backend: the site knows the interface and owns every pixel.
 	</li>
 	<li>
 		<strong>Versions are pinned.</strong> The tag is part of the URL path, so builds are

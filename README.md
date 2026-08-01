@@ -24,10 +24,12 @@ Roughly 350 lines of actual code. Read in this order:
 | 2 | `demos.manifest.json` | Which artifact, from which repo, pinned to which tag. |
 | 3 | `scripts/fetch-demos.ts` | Downloading pinned artifacts, and generating the metadata module. Includes the private-repo redirect gotcha. |
 | 4 | `src/lib/demo/loader.ts` | URL construction and the `@vite-ignore` dynamic import. |
-| 5 | `src/lib/demo/DemoHost.svelte` | The lifecycle: preload hints, version check, feature detect, mount, destroy. |
-| 6 | `src/routes/demo/+page.svelte` | The entire integration, in one line of markup. |
-| 7 | `vite.config.ts` | `adapter-static`, prerendering, and the `paths.relative` trap. |
-| 8 | `.github/workflows/deploy.yml` | Build and deploy. Note the absence of Rust. |
+| 5 | `src/lib/demo/DemoHost.svelte` | Lifecycle only: preload hints, version check, feature detect, `create`/`destroy`. Renders no demo UI. |
+| 6 | `src/lib/content/projects/expr/api.ts` | The artifact's interface, declared site-side. |
+| 7 | `src/lib/content/projects/expr/Demo.svelte` | The demo UI. Owned entirely by this site. |
+| 8 | `src/routes/demo/+page.svelte` | The integration: host + UI, wired with a snippet. |
+| 9 | `vite.config.ts` | `adapter-static`, prerendering, and the `paths.relative` trap. |
+| 10 | `.github/workflows/deploy.yml` | Build and deploy. Note the absence of Rust. |
 
 `src/lib/demo/generated-manifest.ts` is written by the fetch script and
 gitignored. Run `npm run fetch-demos` (or anything with a pre-hook: `dev`,
@@ -52,12 +54,12 @@ git tag v0.1.0
    demo.tar.gz  ───────────────────▶  scripts/fetch-demos.ts
                                       reads demos.manifest.json
                                       unpacks to
-                                        static/demos/expr/v0.2.0/
+                                        static/demos/expr/v0.3.0/
                                       generates
                                         src/lib/demo/generated-manifest.ts
                                               │
                                               ▼
-                                      DemoHost.svelte
+                                      DemoHost.svelte      (lifecycle only)
                                         build time:
                                           1. look up meta (no network)
                                           2. emit modulepreload/preload links
@@ -65,15 +67,23 @@ git tag v0.1.0
                                         run time:
                                           3. contractVersion ok?
                                           4. browser features ok?
-                                          5. import(demo.js)
-                                          6. mount(el, options)
+                                          5. import(api.js) -> create()
+                                          6. hand the API to your snippet
                                           7. destroy() on unmount
+                                              │
+                                              ▼
+                              content/projects/expr/Demo.svelte
+                                      all markup, all styling,
+                                      site theme + dark mode
 ```
 
-The site knows exactly two things about the demo: `mount(el, opts)` and
-`destroy()`. It does not know the demo is Rust. The contract doesn't even
-mention WebAssembly — which is why a Zig project can satisfy it with
-hand-written glue, and a TypeScript project can satisfy it with no WASM at all.
+**The artifact is a library, not a page.** It exports `create()` and nothing
+else — no DOM, no CSS. The relationship is frontend/backend: this site knows the
+interface (`content/projects/expr/api.ts`) and owns every pixel.
+
+The contract doesn't mention Rust, wasm-bindgen, or WebAssembly. A Zig project
+satisfies it with hand-written glue; a TypeScript project satisfies it with no
+WASM at all.
 
 ---
 
@@ -154,7 +164,30 @@ Verified: `expr_bg.wasm` is requested **exactly once**. `crossorigin` on a
 mode, and a preload whose credentials mode doesn't match is ignored and the file
 is downloaded twice.
 
-## Four things that were bugs before they were comments
+## contractVersion 1 → 2: the artifact stopped shipping UI
+
+Version 1's artifact exported `mount(element, options)` and built its own
+interface — `document.createElement`, `addEventListener`, and an injected
+`<style>` block. It worked, and it was wrong:
+
+- a project repo was dictating colours and layout on this site
+- this site's theme tokens and dark mode could not reach inside the demo
+- restyling every demo meant editing and re-releasing every project
+- each demo hand-rolled listener removal and timer cleanup — a whole bug class
+- it was the exact flaw that ruled out iframe-per-demo in the first place,
+  reintroduced one layer down
+
+Version 2 exports only `create() → Promise<Api>`. The site builds the UI.
+Concrete results: `api.js` dropped from 6.9 KB to 3.5 KB (half of it was UI),
+`Demo.svelte` has **zero** teardown code because Svelte owns that DOM, and the
+demo picks up dark mode without knowing dark mode exists.
+
+The accepted cost: the site now needs per-demo knowledge to render anything, and
+there is no generic fallback UI. That's the same trade any frontend makes
+against any backend, and it's why `api.ts` is hand-written next to the component
+that uses it.
+
+## Bugs before they were comments
 
 Each was found by actually building this, and each is commented where it matters:
 
@@ -180,6 +213,15 @@ auth header on the second request. See `scripts/fetch-demos.ts`.
 **Dynamic `import()` with a variable specifier needs `@vite-ignore`.** Vite
 statically analyses dynamic imports to pre-bundle them; a variable specifier
 fails the build. See `src/lib/demo/loader.ts`.
+
+**A duplicated `CONTRACT_VERSION` desynced immediately.** It was declared in
+both `contract.ts` and `fetch-demos.ts` with a comment saying "must match." The
+first time the contract went to v2, they didn't, and the script silently
+rejected a perfectly good artifact — with a message that looked like the
+artifact's fault. Fixed by importing it: Node's type stripping lets a plain
+script `import { CONTRACT_VERSION } from '../src/lib/demo/contract.ts'` as long
+as the extension is explicit and that module has no runtime dependencies. A
+comment saying "keep these in sync" is not a mechanism.
 
 ---
 

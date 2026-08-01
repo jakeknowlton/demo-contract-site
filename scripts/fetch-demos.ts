@@ -33,8 +33,12 @@ interface DemoMeta {
 	preload?: string[];
 }
 
-/** Must match CONTRACT_VERSION in src/lib/demo/contract.ts. */
-const CONTRACT_VERSION = 1;
+// Imported, NOT re-declared. This was a duplicated literal until bumping the
+// contract to v2 desynced them and the script silently rejected a valid
+// artifact. Node's type stripping lets a plain script import from a .ts file
+// directly, provided the extension is explicit -- and contract.ts has no
+// runtime dependencies, only types and constants, so it is safe to load here.
+import { CONTRACT_VERSION } from '../src/lib/demo/contract.ts';
 
 const MANIFEST = 'demos.manifest.json';
 const OUT_ROOT = join('static', 'demos');
